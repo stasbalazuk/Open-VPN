@@ -1,0 +1,209 @@
+object Form1: TForm1
+  Left = 757
+  Top = 178
+  BorderIcons = [biSystemMenu, biMinimize]
+  BorderStyle = bsSingle
+  Caption = 
+    'VPN (Virtual Private Network) Downloader ...   -= StalkerSTS =- ' +
+    '        v1.0.0.0'
+  ClientHeight = 313
+  ClientWidth = 462
+  Color = clBtnFace
+  Font.Charset = DEFAULT_CHARSET
+  Font.Color = clWindowText
+  Font.Height = -11
+  Font.Name = 'Tahoma'
+  Font.Style = []
+  FormStyle = fsStayOnTop
+  OldCreateOrder = False
+  Position = poDesktopCenter
+  OnActivate = FormActivate
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  PixelsPerInch = 96
+  TextHeight = 13
+  object ProgressBar1: TProgressBar
+    Left = 0
+    Top = 297
+    Width = 462
+    Height = 16
+    Align = alBottom
+    Step = 1
+    TabOrder = 0
+  end
+  object lst1: TListBox
+    Left = 0
+    Top = 65
+    Width = 462
+    Height = 232
+    Style = lbOwnerDrawFixed
+    Align = alClient
+    Color = clBtnFace
+    Font.Charset = DEFAULT_CHARSET
+    Font.Color = clBlue
+    Font.Height = -11
+    Font.Name = 'Tahoma'
+    Font.Style = []
+    ImeName = 'Russian'
+    ItemHeight = 13
+    ParentFont = False
+    TabOrder = 1
+    OnClick = lst1Click
+    OnDrawItem = lst1DrawItem
+  end
+  object pnl1: TPanel
+    Left = 0
+    Top = 0
+    Width = 462
+    Height = 65
+    Align = alTop
+    BorderStyle = bsSingle
+    ParentBackground = False
+    TabOrder = 2
+    object lbl1: TLabel
+      Left = 8
+      Top = 8
+      Width = 7
+      Height = 13
+      Caption = '0'
+      Font.Charset = DEFAULT_CHARSET
+      Font.Color = clBlue
+      Font.Height = -11
+      Font.Name = 'Tahoma'
+      Font.Style = [fsBold]
+      ParentFont = False
+    end
+    object lbl2: TLabel
+      Left = 208
+      Top = 8
+      Width = 32
+      Height = 13
+      Caption = 'Proxy:'
+    end
+    object lbl3: TLabel
+      Left = 372
+      Top = 0
+      Width = 9
+      Height = 29
+      Caption = ':'
+      Font.Charset = DEFAULT_CHARSET
+      Font.Color = clWindowText
+      Font.Height = -24
+      Font.Name = 'Tahoma'
+      Font.Style = [fsBold]
+      ParentFont = False
+    end
+    object btn1: TButton
+      Left = 128
+      Top = 28
+      Width = 145
+      Height = 25
+      Caption = #1057#1082#1072#1095#1072#1090#1100' '#1086#1073#1085#1086#1074#1083#1077#1085#1080#1077
+      TabOrder = 0
+      OnClick = btn1Click
+    end
+    object btn2: TButton
+      Left = 8
+      Top = 28
+      Width = 113
+      Height = 25
+      Caption = #1055#1086#1080#1089#1082' '#1086#1073#1085#1086#1074#1083#1077#1085#1080#1081
+      TabOrder = 1
+      OnClick = btn2Click
+    end
+    object btn3: TButton
+      Left = 392
+      Top = 28
+      Width = 57
+      Height = 25
+      Caption = #1042#1099#1093#1086#1076
+      TabOrder = 2
+      OnClick = btn3Click
+    end
+    object edt1: TEdit
+      Left = 248
+      Top = 5
+      Width = 121
+      Height = 21
+      ImeName = 'Russian'
+      TabOrder = 3
+      Text = '127.0.0.1'
+    end
+    object edt2: TEdit
+      Left = 383
+      Top = 5
+      Width = 57
+      Height = 21
+      ImeName = 'Russian'
+      TabOrder = 4
+      Text = '3128'
+    end
+    object chk1: TCheckBox
+      Left = 120
+      Top = 8
+      Width = 81
+      Height = 17
+      Caption = 'Use proxy:'
+      TabOrder = 5
+    end
+    object btn4: TButton
+      Left = 280
+      Top = 28
+      Width = 105
+      Height = 25
+      Caption = #1057#1082#1072#1095#1072#1090#1100' OpenVPN'
+      TabOrder = 6
+      OnClick = btn4Click
+    end
+  end
+  object IdHTTP1: TIdHTTP
+    IOHandler = IdIOHandlerSocket1
+    MaxLineAction = maException
+    ReadTimeout = 0
+    OnWork = IdHTTP1Work
+    OnWorkBegin = IdHTTP1WorkBegin
+    AllowCookies = True
+    ProxyParams.BasicAuthentication = False
+    ProxyParams.ProxyPort = 0
+    Request.ContentLength = -1
+    Request.ContentRangeEnd = 0
+    Request.ContentRangeStart = 0
+    Request.ContentType = 'text/html'
+    Request.Accept = 'text/html, */*'
+    Request.BasicAuthentication = False
+    Request.UserAgent = 'Mozilla/3.0 (compatible; Indy Library)'
+    HTTPOptions = [hoForceEncodeParams]
+    CookieManager = IdCookieManager1
+    Left = 232
+    Top = 192
+  end
+  object XPManifest1: TXPManifest
+    Left = 200
+    Top = 192
+  end
+  object tmr1: TTimer
+    Enabled = False
+    Left = 424
+    Top = 232
+  end
+  object IdAntiFreeze1: TIdAntiFreeze
+    Left = 264
+    Top = 192
+  end
+  object IdSSLIOHandlerSocket1: TIdSSLIOHandlerSocket
+    SSLOptions.Method = sslvSSLv2
+    SSLOptions.Mode = sslmUnassigned
+    SSLOptions.VerifyMode = []
+    SSLOptions.VerifyDepth = 0
+    Left = 232
+    Top = 160
+  end
+  object IdIOHandlerSocket1: TIdIOHandlerSocket
+    Left = 232
+    Top = 224
+  end
+  object IdCookieManager1: TIdCookieManager
+    Left = 232
+    Top = 128
+  end
+end

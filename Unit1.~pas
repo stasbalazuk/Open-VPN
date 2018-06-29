@@ -1,0 +1,629 @@
+unit Unit1;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, ComCtrls, IdBaseComponent, IdComponent, IdTCPConnection,
+  IdTCPClient, IdHTTP, XPMan, URLMon, WinInet, Buttons, SyncObjs, ExtCtrls,
+  IdAntiFreezeBase, IdAntiFreeze, IdIOHandler, IdIOHandlerSocket,
+  Masks,
+  IdSSLOpenSSL, IdCookieManager;
+
+const
+  MY_MESS = WM_USER + 100;
+
+type
+  TForm1 = class(TForm)
+    ProgressBar1: TProgressBar;
+    IdHTTP1: TIdHTTP;
+    XPManifest1: TXPManifest;
+    lst1: TListBox;
+    pnl1: TPanel;
+    lbl1: TLabel;
+    btn1: TButton;
+    btn2: TButton;
+    btn3: TButton;
+    tmr1: TTimer;
+    lbl2: TLabel;
+    edt1: TEdit;
+    edt2: TEdit;
+    lbl3: TLabel;
+    chk1: TCheckBox;
+    btn4: TButton;
+    IdAntiFreeze1: TIdAntiFreeze;
+    IdSSLIOHandlerSocket1: TIdSSLIOHandlerSocket;
+    IdIOHandlerSocket1: TIdIOHandlerSocket;
+    IdCookieManager1: TIdCookieManager;
+    procedure AddLog(const aStr: String; const aColor: TColor);
+    procedure DeleteWord(var s:string;substr:string);
+    procedure btn1Click(Sender: TObject);
+    procedure btn2Click(Sender: TObject);
+    procedure lst1Click(Sender: TObject);
+    procedure btn3Click(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
+    procedure lst1DrawItem(Control: TWinControl; Index: Integer;
+      Rect: TRect; State: TOwnerDrawState);
+    procedure btn4Click(Sender: TObject);
+    procedure IdHTTP1Work(Sender: TObject; AWorkMode: TWorkMode;
+      const AWorkCount: Integer);
+    procedure IdHTTP1WorkBegin(Sender: TObject; AWorkMode: TWorkMode;
+      const AWorkCountMax: Integer);
+    procedure FormActivate(Sender: TObject);
+  private
+    procedure WMQueryEndSession(var Message: TMessage); message WM_QUERYENDSESSION;
+  public
+    { Public declarations }
+    procedure thrTerminate(Sender:TObject);
+    procedure MyProgress(var msg:TMessage);message MY_MESS;
+  end;
+
+var
+  Form1: TForm1;
+  http:TIdHTTP;
+  y: integer;
+  TFiles: TStringList;
+  UrlVPN,StrVPN,IPVPN: TStringList;
+  n,nv,vpnf,strf: string;
+  url1,urlf: string;
+  CountThr: integer; // глобальная переменная, индикатор количества потоков
+  SectCounter: TCriticalSection; //TCriticalSection; // критическая секция для счетчика, иначе может возникнуть ошибка совместного доступа
+
+
+implementation
+
+{$R *.dfm}
+{$R UAC.RES}
+
+uses HtmlParser, UrlTools, httpsend, ssl_openssl;
+
+procedure TForm1.WMQueryEndSession(var Message: TMessage);
+begin
+  Message.Result := 1;
+  Application.Terminate;
+end;
+
+type
+  TDownLoader = class(TThread)
+  private
+    FToFolder: string;
+    FURL: string;
+    protected
+      procedure Execute;override;
+    public
+      property URL:string read FURL write FURL;
+      property ToFolder:string read FToFolder write FToFolder;
+      procedure IdHTTP1Work(ASender: TObject; AWorkMode: TWorkMode;
+      AWorkCount: Integer);
+      procedure IdHTTP1WorkBegin(ASender: TObject; AWorkMode: TWorkMode;
+      AWorkCountMax: Integer);
+      procedure IdHTTP1WorkEnd(ASender: TObject; AWorkMode: TWorkMode);
+  end;
+
+procedure TDownLoader.IdHTTP1Work(ASender: TObject; AWorkMode: TWorkMode;
+  AWorkCount: Integer);
+begin
+  Form1.ProgressBar1.Position := AWorkCount;
+end;
+
+procedure CreateFormInRightBottomCorner;
+var
+ r : TRect;
+begin
+ SystemParametersInfo(SPI_GETWORKAREA, 0, Addr(r), 0);
+ Form1.Left := r.Right-Form1.Width;
+ Form1.Top := r.Bottom-Form1.Height;
+end;
+
+procedure FindFiles(StartFolder, Mask: string; List: TStrings;
+  ScanSubFolders: Boolean = True);
+var
+  SearchRec: TSearchRec;
+  FindResult: Integer;
+begin
+  List.BeginUpdate;
+  try
+    StartFolder := IncludeTrailingBackslash(StartFolder);
+    FindResult := FindFirst(StartFolder + '*.*', faAnyFile, SearchRec);
+    try
+      while FindResult = 0 do
+        with SearchRec do
+        begin
+          if (Attr and faDirectory) <> 0 then
+          begin
+            if ScanSubFolders and (Name <> '.') and (Name <> '..') then
+              FindFiles(StartFolder + Name, Mask, List, ScanSubFolders);
+          end
+          else
+          begin
+            if MatchesMask(Name, Mask) then begin
+               DeleteFile(StartFolder + Name);
+               List.Add(StartFolder + Name);
+            end;
+          end;
+          FindResult := FindNext(SearchRec);
+        end;
+    finally
+      FindClose(SearchRec);
+    end;
+  finally
+    List.EndUpdate;
+  end;
+end;
+
+procedure TForm1.AddLog(const aStr: String; const aColor: TColor);
+begin
+  //Добавляем в качестве очередного элемента пару: строка + объект.
+  //Но в качестве объекта передаём на самом деле сведения о цвете.
+  //Т. е. таким образом мы добавляем информацию - строку и цвет фона,
+  //который будет прорисован для этой строки.
+  lst1.Items.AddObject(aStr, TObject(aColor));
+end;
+
+function ExtractText(const Str: string; const Delim1: char): string;
+var
+  pos1, pos2: integer;
+begin
+  result := '';
+  pos1 := Pos(Delim1, Str);
+  if (pos1 > 0) then
+    result := Copy(Str, pos1 + 1, pos1 - 1);
+end;
+
+procedure TDownLoader.IdHTTP1WorkBegin(ASender: TObject; AWorkMode: TWorkMode;
+  AWorkCountMax: Integer);
+begin
+  Form1.ProgressBar1.Position := 0;
+  Form1.ProgressBar1.Max := AWorkcountMax;
+end;
+
+procedure TDownLoader.IdHTTP1WorkEnd(ASender: TObject; AWorkMode: TWorkMode);
+begin
+  Form1.ProgressBar1.Position := 0;
+end;
+
+{ TDownLoader }
+procedure TDownLoader.execute;
+var http: TIdHTTP;
+    str: TFileStream;
+begin
+  //Создим класс для закачки
+  http:=TIdHTTP.Create(nil);
+  http.ProtocolVersion:=pv1_1;
+  http.HandleRedirects:=true;
+  http.ProxyParams.BasicAuthentication := true;
+  if Form1.chk1.Checked then begin
+     http.ProxyParams.ProxyServer:=Form1.edt1.Text;   //10.220.1.7
+     http.ProxyParams.ProxyPort:=StrToInt(Form1.edt2.Text); //3129
+     //http.ProxyParams.ProxyUsername:='cpz01';
+     //http.ProxyParams.ProxyPassword:='cpz0115';
+  end;
+if http.ProxyParams.BasicAuthentication then begin
+  //каталог, куда файл положить
+  ForceDirectories(ExtractFileDir(ToFolder));
+  //Поток для сохранения
+  str := TFileStream.Create(ToFolder, fmCreate);
+  try
+    //Качаем
+    Form1.lbl1.Caption:='Ожидайте ... качаю файл ...';
+    Form1.ProgressBar1.Position:=http.RecvBufferSize;
+    Application.ProcessMessages;
+    http.Get(url, str);
+  finally
+    //Нас учили чистить за собой
+    http.Free;
+    str.Free;
+    SectCounter.Enter;
+    Dec(CountThr);
+    SectCounter.Leave;
+    Form1.btn1.Enabled:=True;
+    Form1.btn3.Enabled:=True;
+    Form1.tmr1.Enabled:=False;
+    Form1.ProgressBar1.Position:=100;
+    Application.ProcessMessages;
+  end;
+end else Form1.lbl1.Caption:='PROXY - ERROR';
+end;
+
+function OpenInternet(Name: WideString): pointer;
+begin
+  result := InternetOpenW(@Name[1], INTERNET_OPEN_TYPE_PRECONFIG,
+    nil, nil, 0);
+end;
+
+function Pars(T_, ForS, _T: string): string;
+var
+  a, b: integer;
+begin
+  Result := ''; // обнуляем результат
+  if (T_ = '') or (ForS = '') or (_T = '') then
+    Exit; // если параметры пусты, то выходим
+  a := Pos(T_, ForS); // ищем заданный параметр T_ в строке ForS
+  if a = 0 then // если не нашли, то
+    Exit // выходим
+  else // иначе
+    a := a + Length(T_); // а=а+длина T_
+  ForS := Copy(ForS, a, Length(ForS) - a + 1); // ForS = копируем из ForS начиная с символа а символов длина Fors - a + 1
+  b := Pos(_T, ForS); // ищем 2ую часть
+  if b > 0 then // если нашли, то
+    Result := Copy(ForS, 1, b - 1); // результат функции равен копированию из ForS начиная с индекса 1 символов b - 1
+// получается, что функция просто обрезает всё, что до параметра T_ и параметр T_, и параметр _T и всё, что после него
+end;
+
+//функция который возвращает кол. массива.
+function DCOUNT(str, Delimeter: string) : integer;
+var
+ StrL : TStringList;
+ ParseStr : string;
+begin
+  try
+    StrL := TStringList.Create;
+    ParseStr:= StringReplace(str, Delimeter, #13, [rfReplaceAll]);
+    StrL.Text := ParseStr;
+    Result := StrL.Count;
+  finally
+    StrL.Free;
+  end;
+end;
+
+//Извелчь урл из строки
+function ExtractUrlFileName(const AUrl: string): string;
+var
+  i: Integer;
+begin
+  i := LastDelimiter('/', AUrl);
+  Result := Copy(AUrl, i + 1, Length(AUrl) - (i));
+end;
+
+function Parse(Char, S: string; Count: Integer): string;
+var
+   I: Integer;
+   T: string;
+begin
+   if S[Length(S)] <> Char then
+     S := S + Char;
+   for I := 1 to Count do
+   begin
+     T := Copy(S, 0, Pos(Char, S) - 1);
+     S := Copy(S, Pos(Char, S) + 1, Length(S));
+   end;
+   Result := T;
+end;
+
+procedure explode(const S, Delimeter : string; Parts : TStrings);
+var
+  CurPos: integer;
+  CurStr: string;
+begin
+  Parts.clear;
+  Parts.BeginUpdate();
+  try
+    CurStr:= S;
+    repeat
+      CurPos:= Pos(Delimeter, CurStr);
+      if (CurPos>0) then
+      begin
+        Parts.Add(Copy(CurStr, 1, Pred(CurPos)));
+        CurStr:= Copy(CurStr, CurPos+Length(Delimeter),
+        Length(CurStr)-CurPos-Length(Delimeter)+1);
+      end else
+        Parts.Add(CurStr);
+    until CurPos=0;
+  finally
+    Parts.EndUpdate();
+  end;
+end;
+
+{-------------------------------------------------------------------------------
+    Функция: ParseStr
+    Автор:    ArhangeL
+    Дата:  2011.01.11
+    Входные параметры: str, sub1, sub2: string
+    Результат:    string
+    Описание: Парсер строки, вытаскивает текст из строки str между тегами sub1, sub2
+    Stt входная строка.
+    sub1 - открывающий тег.
+    Sub2 - закрывающий тег.
+-------------------------------------------------------------------------------}
+function ParseStr(str, sub1, sub2: string): string;
+var
+ st, fin: Integer;
+begin
+ st := Pos(sub1, str);
+if st = 0 then n:='';
+if st > 0 then begin
+ str := Copy(str, st + length(sub1), length(str) - 1);
+ st := 1;
+ fin := Pos(sub2, str);
+ Result := Copy(str, st, fin - st);
+ str := Copy(str, fin + length(sub2), length(str) - 1);
+end;
+end;
+
+procedure TForm1.MyProgress(var msg: TMessage);
+begin
+  case msg.WParam of
+  0:begin ProgressBar1.Max:=msg.LParam;ProgressBar1.Position:=0; end;
+  1:ProgressBar1.Position:=msg.LParam;
+  end;
+end;
+
+procedure TForm1.thrTerminate(Sender: TObject);
+begin
+  MessageBox(Handle,PChar('Файл успешно загружен!'),PChar('Внимание'),64);
+end;
+
+procedure TForm1.btn1Click(Sender: TObject);
+var
+  F,FileStream :TFileStream;
+  lHTTP: THTTPSend;
+  fsz: Integer;
+  i,y: Integer;
+  s: string;
+begin
+if DirectoryExists(ExtractFilePath(ParamStr(0))+'config') then
+   FindFiles(PChar(ExtractFilePath(ParamStr(0))+'config\'), '*.ovpn', TFiles, true);
+for i:=0 to UrlVPN.Count-1 do begin
+try
+   urlf:=UrlVPN.Strings[i];
+   ProgressBar1.Max:=UrlVPN.Count-1;
+   ProgressBar1.Position:=i;
+   Application.ProcessMessages;
+   vpnf:=ExtractUrlFileName(UrlVPN.Strings[i]);
+   url1:=ExtractUrlFileName(UrlVPN.Strings[i]);
+   strf:=StrVPN.Strings[i];
+   ProgressBar1.Position:=20;
+if url1 <> '' then begin
+   tmr1.Enabled:=true;
+   btn1.Enabled:=False;
+   btn3.Enabled:=False;
+   btn4.Enabled:=False;
+   chk1.Enabled:=False;
+   edt1.Enabled:=False;
+   edt2.Enabled:=False;
+   OpenInternet('Mozilla Firefox');
+   if chk1.Checked then begin
+       lHTTP.ProxyHost:=Form1.edt1.Text;
+       lHTTP.ProxyPort:=Form1.edt2.Text;
+   end;
+   ProgressBar1.Position:=50;
+   lHTTP := THTTPSend.Create;
+  try
+    if lHTTP.HTTPMethod('GET', urlf) then
+    if lHTTP.ResultCode = 200 then begin
+       lHTTP.Document.SaveToFile(url1);
+    end;
+  finally
+    lHTTP.Free;
+  end;
+  ProgressBar1.Position:=100;
+  tmr1.Enabled:=False;
+if not DirectoryExists(ExtractFilePath(ParamStr(0))+'config') then CreateDir(ExtractFilePath(ParamStr(0))+'config');
+if FileExists(url1) then RenameFile(url1,'SERJ.WS_'+strf+'.ovpn');
+if not FileExists('SERJ.WS_'+strf+'.ovpn') then Exit;
+   F:=TFileStream.Create('SERJ.WS_'+strf+'.ovpn', fmOpenRead);
+   fsz:=F.Size;
+   F.Free;
+if fsz < 200 then begin
+if FileExists('SERJ.WS_'+strf+'.ovpn') then DeleteFile('SERJ.WS_'+strf+'.ovpn');
+end else begin
+if DirectoryExists(ExtractFilePath(ParamStr(0))+'config') then
+if FileExists('SERJ.WS_'+strf+'.ovpn') then
+MoveFile(PChar('SERJ.WS_'+strf+'.ovpn'),PChar(ExtractFilePath(ParamStr(0))+'config\'+'SERJ.WS_'+strf+'.ovpn'));
+if FileExists('SERJ.WS_'+strf+'.ovpn') and FileExists(ExtractFilePath(ParamStr(0))+'config\'+'SERJ.WS_'+strf+'.ovpn') then
+DeleteFile('SERJ.WS_'+strf+'.ovpn');
+end;
+end else lst1.Items.Add('Нет данных для загрузки ...');
+except on e: Exception do
+   ShowMessage(e.Message); // вот здесь получаем 'Operation aborted'
+end;
+end;
+if ProgressBar1.Position <= 100 then lbl1.Caption:='Download - OK';
+btn1.Enabled:=True;
+btn3.Enabled:=True;
+btn4.Enabled:=True;
+chk1.Enabled:=True;
+edt1.Enabled:=True;
+edt2.Enabled:=True;
+end;
+
+procedure TForm1.btn2Click(Sender: TObject);
+var
+  st: TMemoryStream;
+  i,y:integer;
+  Source,Source1: TStringList;
+  s,s1,substr,substr1,ipv : string;
+  UrlSite  : string;
+  SrcPathCount: Integer;
+  SrcHost, SrcPath, Srcfname, Srcfext:String;
+  HTTP: THTTPSend;
+  str: TStringList;
+begin
+  lst1.Items.Clear;
+  tmr1.Enabled:=True;
+  OpenInternet('Mozilla Firefox');
+  //Создим класс для закачки
+  st:=TMemoryStream.Create;
+  Source:=TStringList.Create;
+  Source1:=TStringList.Create;
+  Http:=THTTPSend.Create;
+  str:= TStringList.Create;
+  if chk1.Checked then begin
+     HTTP.ProxyHost:=Form1.edt1.Text;
+     HTTP.ProxyPort:=Form1.edt2.Text;
+  end;
+  //каталог, куда файл положить
+  ForceDirectories(ExtractFileDir(ExtractFilePath(ParamStr(0))));
+  //Поток для сохранения
+  //str:=TFileStream.Create(ExtractFilePath(ParamStr(0))+'Log.txt', fmCreate);  //+Form1.urlf
+  SrcPathCount:=SplitFullURL(Trim(url1), Srchost,Srcpath,Srcfname,Srcfext);
+if (SrcPathCount=-1) then Exit;
+   UrlSite:='http://'+SrcHost+SrcPath+Srcfname+Srcfext;
+try
+   Application.ProcessMessages;
+   HTTP.HTTPMethod('Get', 'http://serj.ws/openvpn');
+   http.MimeType:='application/x-www-form-urlencoded';
+   if Http.ResultCode = 200 then form1.lbl1.Caption:='PROXY - OK'
+   else form1.lbl1.Caption:='PROXY - NO';
+   str.LoadFromStream(HTTP.Document);
+   // переводим в ansi(сайт на кодировке utf8), просто если не перевести, будут очень нехорошие символы
+   str.Text:=utf8toansi(str.Text);
+   Source.Text:=str.Text;
+   {Source.SaveToFile('vpn.log'); //Для теста
+   if FileExists('vpn.log') then Source.LoadFromFile('vpn.log'); // Для теста}
+except on e: Exception do
+   ShowMessage(e.Message); // вот здесь получаем 'Operation aborted'
+end;
+  for i:=0 to Source.Count-1 do begin
+      n:=Source.Strings[i];
+      //n:=Utf8ToAnsi(n);
+   if Pars('<div class="ovpn"><font color=black><b>', n, '</b>') <> '' then
+    begin
+      Source1.Text:=Source.Strings[i];
+      s := ParseStr(Source1.Text,'<font color=black><b>','</b>');
+      StrVPN.Add(Trim(s));
+      substr1:= Trim(s);
+    end;
+   if Pars('<div class="ovpn"><font color="#D40000"><b>', n, '</b>') <> '' then
+    begin
+      Source1.Text:=Source.Strings[i];
+      s := ParseStr(Source1.Text,'<font color="#D40000"><b>','</b>');
+      IPVPN.Add(Trim(s));
+      ipv:=Trim(s);
+    end;
+   if Pars('<div class="ovpn"><b><a href=', n, 'title="Скачать"') <> '' then
+    begin
+      Source1.Text:=Source.Strings[i];
+      s := ParseStr(Source1.Text,'href="','" title');
+      substr:= Trim('http://serj.ws'+s+'='+substr1);
+      UrlVPN.Add(Trim('http://serj.ws'+s));
+      AddLog(Trim(substr1)+' -> '+ipv,RGB(Random(11) * 20 , Random(11) * 20, Random(11) * 20));
+    end;
+  end;
+  if UrlVPN.Count <> StrVPN.Count then StrVPN.Add(StrVPN.Strings[Random(StrVPN.Count)]);
+  if UrlVPN.Count <> StrVPN.Count then StrVPN.Add(StrVPN.Strings[Random(StrVPN.Count)]);
+  if UrlVPN.Count <> StrVPN.Count then StrVPN.Add(StrVPN.Strings[Random(StrVPN.Count)]);
+  if UrlVPN.Count <> StrVPN.Count then StrVPN.Add(StrVPN.Strings[Random(StrVPN.Count)]);
+  if UrlVPN.Count <> StrVPN.Count then StrVPN.Add(StrVPN.Strings[Random(StrVPN.Count)]);
+  {y:=UrlVPN.Count;
+  UrlVPN.SaveToFile('UrlVPN.txt'); //Для теста
+  y:=IPVPN.Count;
+  IPVPN.SaveToFile('IPVPN.txt');
+  y:=StrVPN.Count;
+  StrVPN.SaveToFile('StrVPN.txt');}
+  http.Free;
+  str.Free;
+  Source.Free;
+  Source1.Free;
+  DeleteFile('Log.txt');
+  btn2.Enabled:=false;
+  tmr1.Enabled:=false;
+end;
+
+procedure TForm1.lst1Click(Sender: TObject);
+begin
+  lst1.Repaint;
+end;
+
+procedure TForm1.btn3Click(Sender: TObject);
+begin
+ Close;
+end;
+
+procedure TForm1.DeleteWord(var s:string;substr:string);
+begin
+  Delete(s,Pos(substr,s),Length(substr));
+end;
+
+procedure TForm1.FormCreate(Sender: TObject);
+var
+  Style: Longint;
+begin
+  urlf:='';
+  y:=0;
+  CreateFormInRightBottomCorner;
+  TFiles:=TStringList.Create;
+  UrlVPN:=TStringList.Create;
+  StrVPN:=TStringList.Create;
+  IPVPN:=TStringList.Create;
+  url1:='http://serj.ws/openvpn';
+  Style := GetWindowLong(Handle, GWL_STYLE);
+  SetWindowLong(Handle, GWL_STYLE, Style and not WS_SYSMENU); //Скрыть значки на панели формы
+  SectCounter:=TCriticalSection.Create;
+  if not DirectoryExists(ExtractFilePath(ParamStr(0))+'config') then CreateDir(ExtractFilePath(ParamStr(0))+'config');
+end;
+
+procedure TForm1.FormDestroy(Sender: TObject);
+begin
+  TFiles.Free;
+  UrlVPN.Free;
+  StrVPN.Free;
+  IPVPN.Free;
+end;
+
+procedure TForm1.lst1DrawItem(Control: TWinControl; Index: Integer;
+  Rect: TRect; State: TOwnerDrawState);
+var
+  OldColor : TColor;
+begin
+  with lst1.Canvas do begin
+    //Запоминаем действующий цвет шрифта.
+    OldColor := Font.Color;
+    //Извлекаем сведения о цвете шрифта и задаём для шрифта канвы этот цвет.
+    Font.Color := TColor(lst1.Items.Objects[Index]);
+    //Выводим текст строки.
+    TextOut(Rect.Left, Rect.Top, lst1.Items[Index]);
+    //Восстанавливаем прежний цвет шрифта.
+    Font.Color := OldColor;
+  end;
+end;
+
+procedure TForm1.btn4Click(Sender: TObject);
+var
+ Stream:TMemoryStream;
+ url,r:WideString;
+ i,j:integer;
+begin
+   try
+    Stream:=TMemoryStream.Create;
+    url:='https://swupdate.openvpn.org/community/releases/openvpn-install-2.4.2-I601.exe';
+    for i:=1 to length(url) do
+     begin
+      if url[i]='.' then
+       begin
+        j:=i;
+       end;
+     end;
+    r:=copy(url,j+1,length(url));
+    IdSSLIOHandlerSocket1:=TIdSSLIOHandlerSocket.Create(IdHTTP1);
+    IdSSLIOHandlerSocket1.SSLOptions.Method := sslvTLSv1;
+    IdHTTP1.IOHandler:=IdSSLIOHandlerSocket1;
+    IdHTTP1.Get(url,Stream);
+    ProgressBar1.Position:=ProgressBar1.Position+Stream.Size;
+    Stream.SaveToFile('openvpn-install-2.4.2-I601.'+r);
+    Stream.Free;
+   except
+    on e:Exception do
+     Stream.Free;
+   end;
+end;
+
+procedure TForm1.IdHTTP1Work(Sender: TObject; AWorkMode: TWorkMode;
+  const AWorkCount: Integer);
+begin
+   ProgressBar1.Position:=ProgressBar1.Position+AWorkCount;
+end;
+
+procedure TForm1.IdHTTP1WorkBegin(Sender: TObject; AWorkMode: TWorkMode;
+  const AWorkCountMax: Integer);
+begin
+   ProgressBar1.Max:=AWorkCountMax;
+end;
+
+procedure TForm1.FormActivate(Sender: TObject);
+begin
+CreateFormInRightBottomCorner;
+end;
+
+end.
